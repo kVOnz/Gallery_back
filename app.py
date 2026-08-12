@@ -1,58 +1,80 @@
 from flask import Flask, render_template, request, redirect, url_for
-import pymysql
+import os
+import psycopg2
+import psycopg2.extras
+import os
 
 app = Flask(__name__)
 
 DB_CONFIG = {
-
+    'host': 'localhost',
+    'port': 5432,
+    'user': 'postgres',
+    'password': '5671JxD+7Yx_',
+    'database': ''
 }
-
 def get_db():
-    return pymysql.connect(**DB_CONFIG)
+    conn = psycopg2.connect(**DB_CONFIG)
+    conn.cursor_factory = psycopg2.extras.DictCursor
+    return conn
 
-
-# галвная страница
+# главная страница
 @app.route('/')
 def index():
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute("""
-                SELECT p.product_id, p.name, c.name AS category,
-                       p.unit, p.quantity_on_stock
-                FROM products p
-                JOIN categories c ON p.category_id = c.category_id
-                WHERE p.is_deleted = 0
-                ORDER BY p.name
+                SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
+                FROM images i
+                JOIN users u ON i.user_id = u.user_id
+                ORDER BY i.uploaded_at DESC
             """)
-            products = cur.fetchall()
+            images = cur.fetchall()
     finally:
         db.close()
-    return render_template('index.html', products=products)
+    return render_template('index.html', images=images)
 
-# регистрация
-@app.route('/registration', methods=['GET', 'POST'])
-def registration():
-
+# загрузить картинку
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
     if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        role = request.form['role']
-    
+        title = request.form['title']
+        file = request.files['image']
+        
+        # сохранить файл
+        filename = file.filename
+        file.save(os.path.join('static/uploads', filename))
+        
+        # записать в БД
+        file_path = f'/static/uploads/{filename}'
         db = get_db()
-        try:
-            with db.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
-                    (username, password, role)
+        cur = db.cursor()
+        cur.execute(
+                "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
+                (1, title, file_path)
                 )
-                db.commit()
-        finally:
-            db.close()
+        image_id = cur.fetchone()[0]
+        db.commit()
+        db.close()
+        
+        return redirect(url_for('index'))
+    
+    return render_template('upload.html')
 
-        return redirect(url_for('login'))
-
-    return render_template('registration.html')
+# поиск картинки
+@app.route('/search')
+def search():
+    query = request.args.get('q', '')
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT * FROM images WHERE title ILIKE %s ORDER BY uploaded_at DESC",
+        (f'%{query}%',)
+    )
+    images = cur.fetchall()
+    db.close()
+    return render_template('index.html', images=images, query=query)
 
 # войти
 @app.route('/login', methods=['GET', 'POST'])
@@ -79,3 +101,27 @@ def login():
             return render_template('login.html', error='Неверный логин или пароль')
 
     return render_template('login.html')
+
+# регистрация
+@app.route('/registration', methods=['GET', 'POST'])
+def registration():
+
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        role = request.form['role']
+    
+        db = get_db()
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
+                    (username, password, role)
+                )
+                db.commit()
+        finally:
+            db.close()
+
+        return redirect(url_for('login'))
+
+    return render_template('registration.html')
