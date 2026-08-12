@@ -10,7 +10,7 @@ DB_CONFIG = {
     'host': 'localhost',
     'port': 5432,
     'user': 'postgres',
-    'password': '5671JxD+7Yx_',
+    'password': '',
     'database': ''
 }
 def get_db():
