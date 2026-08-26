@@ -2,9 +2,11 @@ import os
 import bcrypt
 import psycopg2
 import psycopg2.extras
+from psycopg2 import pool
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+from schemas import ImageResponse, UserResponse
 
 load_dotenv()
 
@@ -12,18 +14,35 @@ app = Flask(__name__)
 CORS(app)
 app.secret_key = os.getenv('SECRET_KEY')
 
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST'),
-    'port': int(os.getenv('DB_PORT', 5432)),
-    'user': os.getenv('DB_USER'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': os.getenv('DB_NAME')
-}
+connection_pool = pool.SimpleConnectionPool( 1, 20,
+    host=os.getenv('DB_HOST'),
+    port=int(os.getenv('DB_PORT', 5432)),
+    user=os.getenv('DB_USER'),
+    password=os.getenv('DB_PASSWORD'),
+    database=os.getenv('DB_NAME')
+)
 
 def get_db():
-    conn = psycopg2.connect(**DB_CONFIG)
+    conn = connection_pool.getconn()
     conn.cursor_factory = psycopg2.extras.DictCursor
     return conn
+
+def release_db(conn):
+    connection_pool.putconn(conn)
+
+def serialize_images(images):
+    result = []
+    for img in images:
+        result.append(
+            ImageResponse(
+                image_id=img['image_id'],
+                title=img['title'],
+                file_path=img['file_path'],
+                uploaded_at=img['uploaded_at'],
+                username=img['username']
+            ).model_dump()
+        )
+    return result
 
 # Получить список картинок
 @app.route('/api/images', methods=['GET'])
@@ -39,18 +58,9 @@ def get_images():
             """)
             images = cur.fetchall()
     finally:
-        db.close()
+        release_db(db)
 
-    result = []
-    for img in images:
-        result.append({
-            'image_id': img['image_id'],
-            'title': img['title'],
-            'file_path': img['file_path'],
-            'uploaded_at': img['uploaded_at'].strftime('%Y-%m-%d %H:%M:%S'),
-            'username': img['username']
-        })
-    return jsonify(result)
+    return jsonify(serialize_images(images))
 
 # Регистрация
 @app.route('/api/register', methods=['POST'])
@@ -75,7 +85,7 @@ def register():
             user_id = cur.fetchone()[0]
             db.commit()
     finally:
-        db.close()
+        release_db(db)
 
     return jsonify({'status': 'ok', 'user_id': user_id}), 201
 
@@ -98,15 +108,14 @@ def login():
             )
             user = cur.fetchone()
     finally:
-        db.close()
+        release_db(db)
 
     if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-        return jsonify({
-            'status': 'ok',
-            'user_id': user['user_id'],
-            'username': user['username'],
-            'role': user['role']
-        })
+        return jsonify(UserResponse(
+            user_id=user['user_id'],
+            username=user['username'],
+            role=user['role']
+        ).model_dump())
     else:
         return jsonify({'error': 'Неверный логин или пароль'}), 401
 
@@ -142,7 +151,7 @@ def upload():
             image_id = cur.fetchone()[0]
             db.commit()
     finally:
-        db.close()
+        release_db(db)
 
     return jsonify({'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}), 201
 
@@ -163,18 +172,9 @@ def search():
             """, (f'%{query}%',))
             images = cur.fetchall()
     finally:
-        db.close()
+        release_db(db)
 
-    result = []
-    for img in images:
-        result.append({
-            'image_id': img['image_id'],
-            'title': img['title'],
-            'file_path': img['file_path'],
-            'uploaded_at': img['uploaded_at'].strftime('%Y-%m-%d %H:%M:%S'),
-            'username': img['username']
-        })
-    return jsonify(result)
+    return jsonify(serialize_images(images))
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
