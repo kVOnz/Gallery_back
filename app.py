@@ -1,3 +1,4 @@
+# различные импорты библиотек для хеширования пароля, работой с БД, .env файла и т.п.
 import os
 import bcrypt
 import psycopg2
@@ -8,13 +9,17 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from schemas import ImageResponse, UserResponse
 
+# загрузить все из .env файла
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
-app.secret_key = os.getenv('SECRET_KEY')
+CORS(app) # разрешить запросы из других портов
+app.secret_key = os.getenv('SECRET_KEY') 
 
-connection_pool = pool.SimpleConnectionPool( 1, 20,
+# пул соединений, чтобы не открывать новые соединения на каждый запрос
+connection_pool = pool.SimpleConnectionPool(
+    1, # мин. кол-во соединений
+    20, # макс. кол-во соединений
     host=os.getenv('DB_HOST'),
     port=int(os.getenv('DB_PORT', 5432)),
     user=os.getenv('DB_USER'),
@@ -22,13 +27,16 @@ connection_pool = pool.SimpleConnectionPool( 1, 20,
     database=os.getenv('DB_NAME')
 )
 
+# функция получения соединения из _пула_ --> (штука выше)
 def get_db():
     conn = connection_pool.getconn()
     conn.cursor_factory = psycopg2.extras.DictCursor
     return conn
 
+# функция возврата соединения в пул
 def release_db(conn):
     connection_pool.putconn(conn)
+
 
 def serialize_images(images):
     result = []
@@ -44,11 +52,11 @@ def serialize_images(images):
         )
     return result
 
-# Получить список картинок
+# __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК__
 @app.route('/api/images', methods=['GET'])
 def get_images():
     db = get_db()
-    try:
+    try: # выполнение функции SELECT и JOIN для получения image_id, title, file_path, uploaded_at картинки и username юзера, который опубликовал ее
         with db.cursor() as cur:
             cur.execute("""
                 SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
@@ -56,51 +64,55 @@ def get_images():
                 JOIN users u ON i.user_id = u.user_id
                 ORDER BY i.uploaded_at DESC
             """)
-            images = cur.fetchall()
+            images = cur.fetchall() # получение всех строк из результата SQL запроса
     finally:
-        release_db(db)
+        release_db(db) # возвращение соединения в пул
 
     return jsonify(serialize_images(images))
 
-# Регистрация
+# __РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ__
 @app.route('/api/register', methods=['POST'])
-def register():
+def register(): 
+    # получение JSON запроса от фронта с username, password и ролей usera
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
     role = data.get('role', 'user')
 
+    # проверка, что username и password не пустые, иначе выдать ошибку 400
     if not username or not password:
         return jsonify({'error': 'Логин и пароль обязательны'}), 400
 
+    # хеширование пароля через bcrypt
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
     db = get_db()
-    try:
+    try: # выполнение функции INSERT INTO users, чтобы записать нового пользователя
         with db.cursor() as cur:
-            cur.execute(
+            cur.execute( 
                 "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING user_id",
                 (username, hashed, role)
             )
-            user_id = cur.fetchone()[0]
-            db.commit()
+            user_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец (0)
+            db.commit() # сохранение изменений
     finally:
-        release_db(db)
+        release_db(db) # возвращение соединения в пул
 
     return jsonify({'status': 'ok', 'user_id': user_id}), 201
 
-# Вход
+# __ВХОД__
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
 
+    # проверка на наличие username и password, иначе ошибка 400
     if not username or not password:
         return jsonify({'error': 'Логин и пароль обязательны'}), 400
 
     db = get_db()
-    try:
+    try: # выполнение функции SELECT для поиска usera по логину
         with db.cursor() as cur:
             cur.execute(
                 "SELECT user_id, username, password_hash, role FROM users WHERE username = %s",
@@ -108,9 +120,13 @@ def login():
             )
             user = cur.fetchone()
     finally:
-        release_db(db)
+        release_db(db) # возвращение соединения в пул
 
-    if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+    # проверка пародя через bcrypt
+    if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
+        # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
+        # password.encode - нужна для превращения строки пароля в байты
+        # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
         return jsonify(UserResponse(
             user_id=user['user_id'],
             username=user['username'],
@@ -119,49 +135,53 @@ def login():
     else:
         return jsonify({'error': 'Неверный логин или пароль'}), 401
 
-# Загрузка картинки
+# __ЗАГРУЗКА КАРТИНКИ__
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    if 'image' not in request.files:
+    if 'image' not in request.files: # проверка, что картинка есть
         return jsonify({'error': 'Файл не найден'}), 400
 
+    # получение название картинки и id пользователя
     file = request.files['image']
     title = request.form.get('title', '')
-    user_id = request.form.get('user_id', 1)
+    user_id = request.form.get('user_id', 1) # если не получилось передать id пользователя, то ставится 1
 
+    # если названия файла нет, то ошибка 400
     if file.filename == '':
         return jsonify({'error': 'Файл не выбран'}), 400
+    
+    upload_folder = os.path.join(app.root_path, 'static', 'uploads') # определение пути для папки с картинками
+    os.makedirs(upload_folder, exist_ok=True) # создание папки если ее нет
 
-    upload_folder = os.path.join(app.root_path, 'static', 'uploads')
-    os.makedirs(upload_folder, exist_ok=True)
+    # сохранение файла
+    filename = file.filename # название файла
+    file_path_full = os.path.join(upload_folder, filename) # полный путь до папки
+    file.save(file_path_full) # сохранение файла на диск по пути, прописанный выше
 
-    filename = file.filename
-    file_path_full = os.path.join(upload_folder, filename)
-    file.save(file_path_full)
-
+    # путь для БД
     file_path_db = f'/static/uploads/{filename}'
 
     db = get_db()
-    try:
+    try: # выполнение функции INSERT INTO images для сохранения информации о картинке, user_id, title, file_path
         with db.cursor() as cur:
             cur.execute(
                 "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
                 (user_id, title, file_path_db)
             )
-            image_id = cur.fetchone()[0]
+            image_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец
             db.commit()
     finally:
-        release_db(db)
+        release_db(db) # возвращение соединения в пул
 
-    return jsonify({'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}), 201
+    return jsonify({'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}), 201 # ответ фронту после успешной загрузки картинки
 
-# Поиск
+# __ПОИСК КАРТИНКИ__
 @app.route('/api/search')
-def search():
+def search(): # получение поискового запроса из URL
     query = request.args.get('q', '')
 
     db = get_db()
-    try:
+    try: # выполнение функций SELECT, JOIN с помощью ILIKE (поиск без учета регистра)
         with db.cursor() as cur:
             cur.execute("""
                 SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
@@ -172,9 +192,10 @@ def search():
             """, (f'%{query}%',))
             images = cur.fetchall()
     finally:
-        release_db(db)
+        release_db(db) # возвращение соединения в пул
 
     return jsonify(serialize_images(images))
 
+# __ЗАПУСК ПРИЛОЖЕНИЯ__
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
