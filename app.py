@@ -62,13 +62,20 @@ api = Api(
 )
 ns = api.namespace('api', description="операция с картинками")
 
-# описание модели
+# описание модели для главной страницы
 image_model = api.model('Image', {
     'image_id': fields.Integer(description='ID изображения', example=1),
     'title': fields.String(description='Название картинки', example='Мой кот'),
     'file_path': fields.String(description='Путь к файлу', example='/uploads/cat.jpg'),
     'uploaded_at': fields.String(description='Дата загрузки', example='2026-08-29 12:00:00'),
     'username': fields.String(description='Кто загрузил', example='ivan_ivanov')
+})
+
+# описание модели номер 2 (для регистрации)
+register_model = api.model('Register', {
+    'username': fields.String(required=True, description='Логин пользователя', example='ivan'),
+    'password': fields.String(required=True, description='Пароль', example='123'),
+    'role': fields.String(required=False, description='Роль', example='user')
 })
 
 # __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
@@ -93,34 +100,37 @@ class ImageList(Resource):
         return serialize_images(images)
 
 # __РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ__
-@app.route('/api/register', methods=['POST'])
-def register(): 
-    # получение JSON запроса от фронта с username, password и ролей usera
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    role = data.get('role', 'user')
+@ns.route('/register')
+class ImageList(Resource):
+    @ns.doc('register_user')
+    @ns.expect(register_model)
+    def post(self):
+        # получение JSON запроса от фронта с username, password и ролей usera
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        role = data.get('role', 'user')
 
-    # проверка, что username и password не пустые, иначе выдать ошибку 400
-    if not username or not password:
-        return jsonify({'error': 'Логин и пароль обязательны'}), 400
+        # проверка, что username и password не пустые, иначе выдать ошибку 400
+        if not username or not password:
+            return jsonify({'error': 'Логин и пароль обязательны'}), 400
 
-    # хеширование пароля через bcrypt
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # хеширование пароля через bcrypt
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-    db = get_db()
-    try: # выполнение функции INSERT INTO users, чтобы записать нового пользователя
-        with db.cursor() as cur:
-            cur.execute( 
-                "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING user_id",
-                (username, hashed, role)
-            )
-            user_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец (0)
-            db.commit() # сохранение изменений
-    finally:
-        release_db(db) # возвращение соединения в пул
+        db = get_db()
+        try: # выполнение функции INSERT INTO users, чтобы записать нового пользователя
+            with db.cursor() as cur:
+                cur.execute( 
+                    "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING user_id",
+                    (username, hashed, role)
+                )
+                user_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец (0)
+                db.commit() # сохранение изменений
+        finally:
+            release_db(db) # возвращение соединения в пул
 
-    return jsonify({'status': 'ok', 'user_id': user_id}), 201
+        return {'status': 'ok', 'user_id': user_id}, 201
 
 # __ВХОД__
 @app.route('/api/login', methods=['POST'])
