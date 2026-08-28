@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from schemas import ImageResponse, UserResponse
+from flask_restx import Api, Resource, fields
 
 # загрузить все из .env файла
 load_dotenv()
@@ -52,23 +53,44 @@ def serialize_images(images):
         )
     return result
 
-# __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК__
-@app.route('/api/images', methods=['GET'])
-def get_images():
-    db = get_db()
-    try: # выполнение функции SELECT и JOIN для получения image_id, title, file_path, uploaded_at картинки и username юзера, который опубликовал ее
-        with db.cursor() as cur:
-            cur.execute("""
-                SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
-                FROM images i
-                JOIN users u ON i.user_id = u.user_id
-                ORDER BY i.uploaded_at DESC
-            """)
-            images = cur.fetchall() # получение всех строк из результата SQL запроса
-    finally:
-        release_db(db) # возвращение соединения в пул
+# простраство имен для картинок
+api = Api(
+    app, 
+    version='1.0', 
+    title='Мой сайт с картинками',
+    doc='/docs'
+)
+ns = api.namespace('api', description="операция с картинками")
 
-    return jsonify(serialize_images(images))
+# описание модели
+image_model = api.model('Image', {
+    'image_id': fields.Integer(description='ID изображения', example=1),
+    'title': fields.String(description='Название картинки', example='Мой кот'),
+    'file_path': fields.String(description='Путь к файлу', example='/uploads/cat.jpg'),
+    'uploaded_at': fields.String(description='Дата загрузки', example='2026-08-29 12:00:00'),
+    'username': fields.String(description='Кто загрузил', example='ivan_ivanov')
+})
+
+# __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
+@ns.route('/images')
+class ImageList(Resource):
+    @ns.doc('get_images')
+    @ns.marshal_list_with(image_model)
+    def get(self):
+        db = get_db()
+        try: # выполнение функции SELECT и JOIN для получения image_id, title, file_path, uploaded_at картинки и username юзера, который опубликовал ее
+            with db.cursor() as cur:
+                cur.execute("""
+                    SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
+                    FROM images i
+                    JOIN users u ON i.user_id = u.user_id
+                    ORDER BY i.uploaded_at DESC
+                """)
+                images = cur.fetchall() # получение всех строк из результата SQL запроса
+        finally:
+            release_db(db) # возвращение соединения в пул
+
+        return serialize_images(images)
 
 # __РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ__
 @app.route('/api/register', methods=['POST'])
