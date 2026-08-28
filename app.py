@@ -101,19 +101,21 @@ class ImageList(Resource):
 
 # __РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЯ__
 @ns.route('/register')
-class ImageList(Resource):
+class Register(Resource):
     @ns.doc('register_user')
-    @ns.expect(register_model)
+    @ns.expect(register_model, validate=True) # validatre нужно для автоматической проверки полей
+    @ns.response(400, 'Логин и пароль обязательны или неверный формат')
+    @ns.response(201, 'Пользователь успешно создан')
     def post(self):
         # получение JSON запроса от фронта с username, password и ролей usera
-        data = request.get_json()
+        data = ns.payload
         username = data.get('username')
         password = data.get('password')
         role = data.get('role', 'user')
 
         # проверка, что username и password не пустые, иначе выдать ошибку 400
-        if not username or not password:
-            return jsonify({'error': 'Логин и пароль обязательны'}), 400
+        if not username.strip() or not password.strip():
+            return {'error': 'Логин и пароль обязательны'}, 400
 
         # хеширование пароля через bcrypt
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
