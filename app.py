@@ -78,6 +78,11 @@ register_model = api.model('Register', {
     'role': fields.String(required=False, description='Роль', example='user')
 })
 
+login_model = api.model('Login', {
+    'username': fields.String(required=True, description='Логин', example='ivan'),
+    'password': fields.String(required=True, description='Пароль', example='123')
+})
+
 # __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
 @ns.route('/images')
 class ImageList(Resource):
@@ -135,39 +140,40 @@ class Register(Resource):
         return {'status': 'ok', 'user_id': user_id}, 201
 
 # __ВХОД__
-@app.route('/api/login', methods=['POST'])
-def login():
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
+@app.route('/login')
+class Login('login_user'):
+    @ns.doc('login_user')
+    @ns.expect(login_model, validate=True)
+    @ns.response(200, 'Успешный вход')
+    @ns.response(401, 'Неверный логин или пароль')
+    def post(self):
+        data = ns.payload
+        username = data.get('username')
+        password = data.get('password')
 
-    # проверка на наличие username и password, иначе ошибка 400
-    if not username or not password:
-        return jsonify({'error': 'Логин и пароль обязательны'}), 400
+        db = get_db()
+        try: # выполнение функции SELECT для поиска usera по логину
+            with db.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id, username, password_hash, role FROM users WHERE username = %s",
+                    (username,)
+                )
+                user = cur.fetchone()
+        finally:
+            release_db(db) # возвращение соединения в пул
 
-    db = get_db()
-    try: # выполнение функции SELECT для поиска usera по логину
-        with db.cursor() as cur:
-            cur.execute(
-                "SELECT user_id, username, password_hash, role FROM users WHERE username = %s",
-                (username,)
-            )
-            user = cur.fetchone()
-    finally:
-        release_db(db) # возвращение соединения в пул
-
-    # проверка пародя через bcrypt
-    if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
-        # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
-        # password.encode - нужна для превращения строки пароля в байты
-        # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
-        return jsonify(UserResponse(
-            user_id=user['user_id'],
-            username=user['username'],
-            role=user['role']
-        ).model_dump())
-    else:
-        return jsonify({'error': 'Неверный логин или пароль'}), 401
+        # проверка пародя через bcrypt
+        if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
+            # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
+            # password.encode - нужна для превращения строки пароля в байты
+            # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
+            return jsonify(UserResponse(
+                user_id=user['user_id'],
+                username=user['username'],
+                role=user['role']
+            ).model_dump())
+        else:
+            return jsonify({'error': 'Неверный логин или пароль'}), 401
 
 # __ЗАГРУЗКА КАРТИНКИ__
 @app.route('/api/upload', methods=['POST'])
