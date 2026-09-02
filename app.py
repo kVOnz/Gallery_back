@@ -1,4 +1,3 @@
-# различные импорты библиотек для хеширования пароля, работой с БД, .env файла и т.п.
 import os
 import bcrypt
 import psycopg2
@@ -9,6 +8,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from schemas import ImageResponse, UserResponse
 from flask_restx import Api, Resource, fields
+from werkzeug.datastructures import FileStorage
 
 # загрузить все из .env файла
 load_dotenv()
@@ -230,25 +230,28 @@ class Upload(Resource):
         return {'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}, 201 # ответ фронту после успешной загрузки картинки
 
 # __ПОИСК КАРТИНКИ__
-@app.route('/api/search')
-def search(): # получение поискового запроса из URL
-    query = request.args.get('q', '')
+@ns.route('/search')
+class Search(Resource):
+    @ns.doc('search_images')
+    @ns.marshal_list_with(image_model)
+    def get(self):
+        query = request.args.get('q', '')
 
-    db = get_db()
-    try: # выполнение функций SELECT, JOIN с помощью ILIKE (поиск без учета регистра)
-        with db.cursor() as cur:
-            cur.execute("""
-                SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
-                FROM images i
-                JOIN users u ON i.user_id = u.user_id
-                WHERE i.title ILIKE %s
-                ORDER BY i.uploaded_at DESC
-            """, (f'%{query}%',))
-            images = cur.fetchall()
-    finally:
-        release_db(db) # возвращение соединения в пул
+        db = get_db()
+        try: # выполнение функций SELECT, JOIN с помощью ILIKE (поиск без учета регистра)
+            with db.cursor() as cur:
+                cur.execute("""
+                    SELECT i.image_id, i.title, i.file_path, i.uploaded_at, u.username
+                    FROM images i
+                    JOIN users u ON i.user_id = u.user_id
+                    WHERE i.title ILIKE %s
+                    ORDER BY i.uploaded_at DESC
+                """, (f'%{query}%',))
+                images = cur.fetchall()
+        finally:
+            release_db(db) # возвращение соединения в пул
 
-    return jsonify(serialize_images(images))
+        return serialize_images(images)
 
 # __ЗАПУСК ПРИЛОЖЕНИЯ__
 if __name__ == '__main__':
