@@ -78,10 +78,18 @@ register_model = api.model('Register', {
     'role': fields.String(required=False, description='Роль', example='user')
 })
 
+#
 login_model = api.model('Login', {
     'username': fields.String(required=True, description='Логин', example='ivan'),
     'password': fields.String(required=True, description='Пароль', example='123')
 })
+
+#
+upload_parser = api.parser()
+upload_parser.add_argument('image', location='files', type=FileStorage, required=True, help='Файл картинки')
+upload_parser.add_argument('title', location='form', type=str, help='Название картинки')
+upload_parser.add_argument('user_id', location='form', type=int, help='ID пользователя')
+
 
 # __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
 @ns.route('/images')
@@ -140,8 +148,8 @@ class Register(Resource):
         return {'status': 'ok', 'user_id': user_id}, 201
 
 # __ВХОД__
-@app.route('/login')
-class Login('login_user'):
+@ns.route('/login')
+class Login(Resource):
     @ns.doc('login_user')
     @ns.expect(login_model, validate=True)
     @ns.response(200, 'Успешный вход')
@@ -167,53 +175,59 @@ class Login('login_user'):
             # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
             # password.encode - нужна для превращения строки пароля в байты
             # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
-            return jsonify(UserResponse(
+            return UserResponse(
                 user_id=user['user_id'],
                 username=user['username'],
                 role=user['role']
-            ).model_dump())
+            ).model_dump()
         else:
-            return jsonify({'error': 'Неверный логин или пароль'}), 401
+            return {'error': 'Неверный логин или пароль'}, 401
+  
 
 # __ЗАГРУЗКА КАРТИНКИ__
-@app.route('/api/upload', methods=['POST'])
-def upload():
-    if 'image' not in request.files: # проверка, что картинка есть
-        return jsonify({'error': 'Файл не найден'}), 400
+@ns.route('/upload')
+class Upload(Resource):
+    @ns.doc('upload_image')
+    @ns.expect(upload_parser)
+    @ns.response(201, 'Картинка загружена')
+    @ns.response(400, 'Файл не найден или не выбран')
+    def post(self):
+        args = upload_parser.parse_args()
+        file = args['image']
+        title = args['title'] or ''
+        user_id = args['user_id'] or 1
+        
+        #
+        if not file:
+            return {'error': 'Файл не найден'}, 400
 
-    # получение название картинки и id пользователя
-    file = request.files['image']
-    title = request.form.get('title', '')
-    user_id = request.form.get('user_id', 1) # если не получилось передать id пользователя, то ставится 1
+        # если названия файла нет, то ошибка 400
+        if file.filename == '':
+            return {'error': 'Файл не выбран'}, 400
+        
+        upload_folder = os.path.join(app.root_path, 'static', 'uploads') # определение пути для папки с картинками
+        os.makedirs(upload_folder, exist_ok=True) # создание папки если ее нет
 
-    # если названия файла нет, то ошибка 400
-    if file.filename == '':
-        return jsonify({'error': 'Файл не выбран'}), 400
-    
-    upload_folder = os.path.join(app.root_path, 'static', 'uploads') # определение пути для папки с картинками
-    os.makedirs(upload_folder, exist_ok=True) # создание папки если ее нет
+        # сохранение файла
+        filename = file.filename # название файла
+        file.save(os.path.join(upload_folder, filename)) # сохранение файла на диск по пути, прописанный внутри
 
-    # сохранение файла
-    filename = file.filename # название файла
-    file_path_full = os.path.join(upload_folder, filename) # полный путь до папки
-    file.save(file_path_full) # сохранение файла на диск по пути, прописанный выше
+        # путь для БД
+        file_path_db = f'/static/uploads/{filename}'
 
-    # путь для БД
-    file_path_db = f'/static/uploads/{filename}'
+        db = get_db()
+        try: # выполнение функции INSERT INTO images для сохранения информации о картинке, user_id, title, file_path
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
+                    (user_id, title, file_path_db)
+                )
+                image_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец
+                db.commit()
+        finally:
+            release_db(db) # возвращение соединения в пул
 
-    db = get_db()
-    try: # выполнение функции INSERT INTO images для сохранения информации о картинке, user_id, title, file_path
-        with db.cursor() as cur:
-            cur.execute(
-                "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
-                (user_id, title, file_path_db)
-            )
-            image_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец
-            db.commit()
-    finally:
-        release_db(db) # возвращение соединения в пул
-
-    return jsonify({'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}), 201 # ответ фронту после успешной загрузки картинки
+        return {'status': 'ok', 'image_id': image_id, 'file_path': file_path_db}, 201 # ответ фронту после успешной загрузки картинки
 
 # __ПОИСК КАРТИНКИ__
 @app.route('/api/search')
