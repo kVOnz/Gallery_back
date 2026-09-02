@@ -62,7 +62,7 @@ api = Api(
 )
 ns = api.namespace('api', description="операция с картинками")
 
-# описание модели для главной страницы
+# модель для главной страницы
 image_model = api.model('Image', {
     'image_id': fields.Integer(description='ID изображения', example=1),
     'title': fields.String(description='Название картинки', example='Мой кот'),
@@ -71,20 +71,20 @@ image_model = api.model('Image', {
     'username': fields.String(description='Кто загрузил', example='ivan_ivanov')
 })
 
-# описание модели номер 2 (для регистрации)
+# модель для регистрации
 register_model = api.model('Register', {
     'username': fields.String(required=True, description='Логин пользователя', example='ivan'),
     'password': fields.String(required=True, description='Пароль', example='123'),
     'role': fields.String(required=False, description='Роль', example='user')
 })
 
-#
+# модель для логина
 login_model = api.model('Login', {
     'username': fields.String(required=True, description='Логин', example='ivan'),
     'password': fields.String(required=True, description='Пароль', example='123')
 })
 
-#
+# парсер для загрузки картинок
 upload_parser = api.parser()
 upload_parser.add_argument('image', location='files', type=FileStorage, required=True, help='Файл картинки')
 upload_parser.add_argument('title', location='form', type=str, help='Название картинки')
