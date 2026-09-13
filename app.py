@@ -10,6 +10,7 @@ from schemas import ImageResponse, UserResponse
 from flask_restx import Api, Resource, fields
 from werkzeug.datastructures import FileStorage
 from flask import session
+from functools import wraps
 
 # загрузить все из .env файла
 load_dotenv()
@@ -53,6 +54,14 @@ def serialize_images(images):
             ).model_dump()
         )
     return result
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return {'error': 'Не авторизован'}, 401
+        return f(*args, **kwargs)
+    return decorated
 
 # простраство имен для картинок
 api = Api(
@@ -201,6 +210,7 @@ class Upload(Resource):
     @ns.expect(upload_parser)
     @ns.response(201, 'Картинка загружена')
     @ns.response(400, 'Файл не найден или не выбран')
+    @login_required
     def post(self):
         args = upload_parser.parse_args()
         file = args['image']
