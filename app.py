@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from schemas import ImageResponse, UserResponse
 from flask_restx import Api, Resource, fields
 from werkzeug.datastructures import FileStorage
+from flask import session
+from functools import wraps
 
 # загрузить все из .env файла
 load_dotenv()
@@ -38,7 +40,7 @@ def get_db():
 def release_db(conn):
     connection_pool.putconn(conn)
 
-
+# декоратор для картинок
 def serialize_images(images):
     result = []
     for img in images:
@@ -52,6 +54,24 @@ def serialize_images(images):
             ).model_dump()
         )
     return result
+
+# декоратор для входа
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return {'error': 'Не авторизован'}, 401
+        return f(*args, **kwargs)
+    return decorated
+
+# декоратор для админа
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('role') != 'admin':
+            return {'error': 'Доступ запрещён'}, 403
+        return f(*args, **kwargs)
+    return decorated
 
 # простраство имен для картинок
 api = Api(
@@ -175,6 +195,8 @@ class Login(Resource):
             # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
             # password.encode - нужна для превращения строки пароля в байты
             # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
+            session['user_id'] = user['user_id']
+            session['role'] = user['role']
             return UserResponse(
                 user_id=user['user_id'],
                 username=user['username'],
@@ -182,8 +204,15 @@ class Login(Resource):
             ).model_dump()
         else:
             return {'error': 'Неверный логин или пароль'}, 401
-  
 
+# __ВЫХОД ИЗ АККАУНТА__
+@ns.route('/logout')
+class Logout(Resource):
+    def post(self):
+        session.clear()
+        return {'status': 'ok'}
+        
+  
 # __ЗАГРУЗКА КАРТИНКИ__
 @ns.route('/upload')
 class Upload(Resource):
@@ -191,6 +220,7 @@ class Upload(Resource):
     @ns.expect(upload_parser)
     @ns.response(201, 'Картинка загружена')
     @ns.response(400, 'Файл не найден или не выбран')
+    @admin_required
     def post(self):
         args = upload_parser.parse_args()
         file = args['image']
