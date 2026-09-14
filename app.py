@@ -40,7 +40,7 @@ def get_db():
 def release_db(conn):
     connection_pool.putconn(conn)
 
-
+# декоратор для картинок
 def serialize_images(images):
     result = []
     for img in images:
@@ -55,11 +55,21 @@ def serialize_images(images):
         )
     return result
 
+# декоратор для входа
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
             return {'error': 'Не авторизован'}, 401
+        return f(*args, **kwargs)
+    return decorated
+
+# декоратор для админа
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('role') != 'admin':
+            return {'error': 'Доступ запрещён'}, 403
         return f(*args, **kwargs)
     return decorated
 
@@ -210,7 +220,7 @@ class Upload(Resource):
     @ns.expect(upload_parser)
     @ns.response(201, 'Картинка загружена')
     @ns.response(400, 'Файл не найден или не выбран')
-    @login_required
+    @admin_required
     def post(self):
         args = upload_parser.parse_args()
         file = args['image']
