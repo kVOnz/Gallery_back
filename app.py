@@ -108,7 +108,6 @@ login_model = api.model('Login', {
 upload_parser = api.parser()
 upload_parser.add_argument('image', location='files', type=FileStorage, required=True, help='Файл картинки')
 upload_parser.add_argument('title', location='form', type=str, help='Название картинки')
-upload_parser.add_argument('user_id', location='form', type=int, help='ID пользователя')
 
 
 # __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
@@ -225,7 +224,7 @@ class Upload(Resource):
         args = upload_parser.parse_args()
         file = args['image']
         title = args['title'] or ''
-        user_id = args['user_id'] or 1
+        user_id = session.get('user_id', 1)
         
         #
         if not file:
