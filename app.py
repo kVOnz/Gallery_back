@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 from schemas import ImageResponse, UserResponse
 from flask_restx import Api, Resource, fields
 from werkzeug.datastructures import FileStorage
+from flask import session
+from functools import wraps
+import time
 
 # загрузить все из .env файла
 load_dotenv()
@@ -38,7 +41,7 @@ def get_db():
 def release_db(conn):
     connection_pool.putconn(conn)
 
-
+# декоратор для картинок
 def serialize_images(images):
     result = []
     for img in images:
@@ -52,6 +55,35 @@ def serialize_images(images):
             ).model_dump()
         )
     return result
+
+# декоратор для входа
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return {'error': 'Не авторизован'}, 401
+        return f(*args, **kwargs)
+    return decorated
+
+# декоратор для админа
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('role') != 'admin':
+            return {'error': 'Доступ запрещён'}, 403
+        return f(*args, **kwargs)
+    return decorated
+
+# декоратор для времени
+def timer(f):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = f(*args, **kwargs)
+        end = time.time()
+        execution_time = end - start
+        print(f"время затраченное на запуск {f.__name__}: {execution_time:.4f} сек")
+        return result
+    return wrapper
 
 # простраство имен для картинок
 api = Api(
@@ -88,7 +120,6 @@ login_model = api.model('Login', {
 upload_parser = api.parser()
 upload_parser.add_argument('image', location='files', type=FileStorage, required=True, help='Файл картинки')
 upload_parser.add_argument('title', location='form', type=str, help='Название картинки')
-upload_parser.add_argument('user_id', location='form', type=int, help='ID пользователя')
 
 
 # __ПОЛУЧЕНИЕ ВСЕХ КАРТИНОК (ГЛАВНАЯ)__
@@ -96,6 +127,7 @@ upload_parser.add_argument('user_id', location='form', type=int, help='ID пол
 class ImageList(Resource):
     @ns.doc('get_images')
     @ns.marshal_list_with(image_model)
+    @timer
     def get(self):
         db = get_db()
         try: # выполнение функции SELECT и JOIN для получения image_id, title, file_path, uploaded_at картинки и username юзера, который опубликовал ее
@@ -127,7 +159,7 @@ class Register(Resource):
         role = data.get('role', 'user')
 
         # проверка, что username и password не пустые, иначе выдать ошибку 400
-        if not username.strip() or not password.strip():
+        if not username or not password or not username.strip() or not password.strip():
             return {'error': 'Логин и пароль обязательны'}, 400
 
         # хеширование пароля через bcrypt
@@ -140,11 +172,15 @@ class Register(Resource):
                     "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING user_id",
                     (username, hashed, role)
                 )
-                user_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец (0)
-                db.commit() # сохранение изменений
+                result = cur.fetchone() # получить одну строку из результата и взять из нее 1 столбец (0)
+                if result is None:
+                    return {'ошибка: не удалось создать пользователя'}, 500
+
+                user_id = result[0]
+                db.commit()
+
         finally:
             release_db(db) # возвращение соединения в пул
-
         return {'status': 'ok', 'user_id': user_id}, 201
 
 # __ВХОД__
@@ -171,19 +207,28 @@ class Login(Resource):
             release_db(db) # возвращение соединения в пул
 
         # проверка пародя через bcrypt
-        if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
+        if user and bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
             # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
             # password.encode - нужна для превращения строки пароля в байты
             # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
+            session['user_id'] = user[0]
+            session['role'] = user[3]
             return UserResponse(
-                user_id=user['user_id'],
-                username=user['username'],
-                role=user['role']
+                user_id=user[0],
+                username=user[1],
+                role=user[3]
             ).model_dump()
         else:
             return {'error': 'Неверный логин или пароль'}, 401
-  
 
+# __ВЫХОД ИЗ АККАУНТА__
+@ns.route('/logout')
+class Logout(Resource):
+    def post(self):
+        session.clear()
+        return {'status': 'ok'}
+        
+  
 # __ЗАГРУЗКА КАРТИНКИ__
 @ns.route('/upload')
 class Upload(Resource):
@@ -191,11 +236,12 @@ class Upload(Resource):
     @ns.expect(upload_parser)
     @ns.response(201, 'Картинка загружена')
     @ns.response(400, 'Файл не найден или не выбран')
+    @admin_required
     def post(self):
         args = upload_parser.parse_args()
         file = args['image']
         title = args['title'] or ''
-        user_id = args['user_id'] or 1
+        user_id = session.get('user_id', 1)
         
         #
         if not file:
@@ -222,8 +268,13 @@ class Upload(Resource):
                     "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
                     (user_id, title, file_path_db)
                 )
-                image_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец
+                result = cur.fetchone() # получить одну строку из результата и взять из нее 1 столбец (0)
+                if result is None:
+                    return {'ошибка: не удалось сохранить картинку'}, 500
+
+                image_id = result[0]
                 db.commit()
+
         finally:
             release_db(db) # возвращение соединения в пул
 
