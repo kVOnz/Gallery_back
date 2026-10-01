@@ -11,6 +11,7 @@ from flask_restx import Api, Resource, fields
 from werkzeug.datastructures import FileStorage
 from flask import session
 from functools import wraps
+import time
 
 # загрузить все из .env файла
 load_dotenv()
@@ -73,6 +74,17 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# декоратор для времени
+def timer(f):
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = f(*args, **kwargs)
+        end = time.time()
+        execution_time = end - start
+        print(f"время затраченное на запуск {f.__name__}: {execution_time:.4f} сек")
+        return result
+    return wrapper
+
 # простраство имен для картинок
 api = Api(
     app, 
@@ -115,6 +127,7 @@ upload_parser.add_argument('title', location='form', type=str, help='Назва�
 class ImageList(Resource):
     @ns.doc('get_images')
     @ns.marshal_list_with(image_model)
+    @timer
     def get(self):
         db = get_db()
         try: # выполнение функции SELECT и JOIN для получения image_id, title, file_path, uploaded_at картинки и username юзера, который опубликовал ее
