@@ -146,7 +146,7 @@ class Register(Resource):
         role = data.get('role', 'user')
 
         # проверка, что username и password не пустые, иначе выдать ошибку 400
-        if not username.strip() or not password.strip():
+        if not username or not password or not username.strip() or not password.strip():
             return {'error': 'Логин и пароль обязательны'}, 400
 
         # хеширование пароля через bcrypt
@@ -159,11 +159,15 @@ class Register(Resource):
                     "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING user_id",
                     (username, hashed, role)
                 )
-                user_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец (0)
-                db.commit() # сохранение изменений
+                result = cur.fetchone() # получить одну строку из результата и взять из нее 1 столбец (0)
+                if result is None:
+                    return {'ошибка: не удалось создать пользователя'}, 500
+
+                user_id = result[0]
+                db.commit()
+
         finally:
             release_db(db) # возвращение соединения в пул
-
         return {'status': 'ok', 'user_id': user_id}, 201
 
 # __ВХОД__
@@ -190,16 +194,16 @@ class Login(Resource):
             release_db(db) # возвращение соединения в пул
 
         # проверка пародя через bcrypt
-        if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
+        if user and bcrypt.checkpw(password.encode('utf-8'), user[2].encode('utf-8')): # проверка на совпадение пароля с хешом в БД
             # bcrypt.checkpw - сравнивает хэш введенного пароля и хэш в БД
             # password.encode - нужна для превращения строки пароля в байты
             # user['password_hash'].encode('utf-8') - нужно для забора хэша из БД
-            session['user_id'] = user['user_id']
-            session['role'] = user['role']
+            session['user_id'] = user[0]
+            session['role'] = user[3]
             return UserResponse(
-                user_id=user['user_id'],
-                username=user['username'],
-                role=user['role']
+                user_id=user[0],
+                username=user[1],
+                role=user[3]
             ).model_dump()
         else:
             return {'error': 'Неверный логин или пароль'}, 401
@@ -251,8 +255,13 @@ class Upload(Resource):
                     "INSERT INTO images (user_id, title, file_path) VALUES (%s, %s, %s) RETURNING image_id",
                     (user_id, title, file_path_db)
                 )
-                image_id = cur.fetchone()[0] # получить одну строку из результата и взять из нее 1 столбец
+                result = cur.fetchone() # получить одну строку из результата и взять из нее 1 столбец (0)
+                if result is None:
+                    return {'ошибка: не удалось сохранить картинку'}, 500
+
+                image_id = result[0]
                 db.commit()
+
         finally:
             release_db(db) # возвращение соединения в пул
 
